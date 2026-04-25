@@ -8,6 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+.venv-*/
 worktrees/
 results/
 queue/
@@ -21,3 +22,11 @@ dev/
 
 # Results file
 results.tsv
+
+# Local guard fine-tuning data and generated outputs
+attack_dataset.csv
+data/
+artifacts/
+reports/
+all_results.txt
+llamator_EG_attack.ipynb

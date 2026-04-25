@@ -13,6 +13,7 @@ import os
 import sys
 import time
 import math
+import json
 import argparse
 import pickle
 from multiprocessing import Pool
@@ -41,7 +42,8 @@ TOKENIZER_DIR = os.path.join(CACHE_DIR, "tokenizer")
 BASE_URL = "https://huggingface.co/datasets/karpathy/climbmix-400b-shuffle/resolve/main"
 MAX_SHARD = 6542 # the last datashard is shard_06542.parquet
 VAL_SHARD = MAX_SHARD  # pinned validation shard (shard_06542)
-VAL_FILENAME = f"shard_{VAL_SHARD:05d}.parquet"
+VAL_BASENAME = f"shard_{VAL_SHARD:05d}"
+VAL_FILENAME = f"{VAL_BASENAME}.parquet"
 VOCAB_SIZE = 8192
 
 # BPE split pattern (GPT-4 style, with \p{N}{1,2} instead of {1,3})
@@ -116,26 +118,56 @@ def download_data(num_shards, download_workers=8):
 # Tokenizer training
 # ---------------------------------------------------------------------------
 
-def list_parquet_files():
-    """Return sorted list of parquet file paths in the data directory."""
-    files = sorted(f for f in os.listdir(DATA_DIR) if f.endswith(".parquet") and not f.endswith(".tmp"))
+def list_data_files():
+    """Return sorted list of local training files in the data directory."""
+    files = sorted(
+        f for f in os.listdir(DATA_DIR)
+        if (f.endswith(".parquet") or f.endswith(".jsonl")) and not f.endswith(".tmp")
+    )
     return [os.path.join(DATA_DIR, f) for f in files]
 
 
-def text_iterator(max_chars=1_000_000_000, doc_cap=10_000):
-    """Yield documents from training split (all shards except pinned val shard)."""
-    parquet_paths = [p for p in list_parquet_files() if not p.endswith(VAL_FILENAME)]
-    nchars = 0
-    for filepath in parquet_paths:
+def is_val_file(path):
+    """Return True when the path is the pinned validation shard, regardless of extension."""
+    filename = os.path.basename(path)
+    stem, _ = os.path.splitext(filename)
+    return stem == VAL_BASENAME
+
+
+def iter_texts_from_file(filepath):
+    """Yield document texts from a supported local shard file."""
+    if filepath.endswith(".parquet"):
         pf = pq.ParquetFile(filepath)
         for rg_idx in range(pf.num_row_groups):
             rg = pf.read_row_group(rg_idx)
             for text in rg.column("text").to_pylist():
-                doc = text[:doc_cap] if len(text) > doc_cap else text
-                nchars += len(doc)
-                yield doc
-                if nchars >= max_chars:
-                    return
+                yield text
+        return
+    if filepath.endswith(".jsonl"):
+        with open(filepath, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                record = json.loads(line)
+                text = record.get("text")
+                if isinstance(text, str):
+                    yield text
+        return
+    raise ValueError(f"Unsupported data file type: {filepath}")
+
+
+def text_iterator(max_chars=1_000_000_000, doc_cap=10_000):
+    """Yield documents from training split (all shards except pinned val shard)."""
+    parquet_paths = [p for p in list_data_files() if not is_val_file(p)]
+    nchars = 0
+    for filepath in parquet_paths:
+        for text in iter_texts_from_file(filepath):
+            doc = text[:doc_cap] if len(text) > doc_cap else text
+            nchars += len(doc)
+            yield doc
+            if nchars >= max_chars:
+                return
 
 
 def train_tokenizer():
@@ -149,7 +181,7 @@ def train_tokenizer():
 
     os.makedirs(TOKENIZER_DIR, exist_ok=True)
 
-    parquet_files = list_parquet_files()
+    parquet_files = list_data_files()
     if len(parquet_files) < 2:
         print("Tokenizer: need at least 2 data shards (1 train + 1 val). Download more data first.")
         sys.exit(1)
@@ -253,23 +285,25 @@ def get_token_bytes(device="cpu"):
 
 def _document_batches(split, tokenizer_batch_size=128):
     """Infinite iterator over document batches from parquet files."""
-    parquet_paths = list_parquet_files()
-    assert len(parquet_paths) > 0, "No parquet files found. Run prepare.py first."
-    val_path = os.path.join(DATA_DIR, VAL_FILENAME)
+    parquet_paths = list_data_files()
+    assert len(parquet_paths) > 0, "No data files found. Run prepare.py or add local shards first."
     if split == "train":
-        parquet_paths = [p for p in parquet_paths if p != val_path]
+        parquet_paths = [p for p in parquet_paths if not is_val_file(p)]
         assert len(parquet_paths) > 0, "No training shards found."
     else:
-        parquet_paths = [val_path]
+        parquet_paths = [p for p in parquet_paths if is_val_file(p)]
+        assert len(parquet_paths) > 0, "No validation shard found."
     epoch = 1
     while True:
         for filepath in parquet_paths:
-            pf = pq.ParquetFile(filepath)
-            for rg_idx in range(pf.num_row_groups):
-                rg = pf.read_row_group(rg_idx)
-                batch = rg.column('text').to_pylist()
-                for i in range(0, len(batch), tokenizer_batch_size):
-                    yield batch[i:i+tokenizer_batch_size], epoch
+            batch = []
+            for text in iter_texts_from_file(filepath):
+                batch.append(text)
+                if len(batch) >= tokenizer_batch_size:
+                    yield batch, epoch
+                    batch = []
+            if batch:
+                yield batch, epoch
         epoch += 1
 
 
@@ -372,6 +406,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Prepare data and tokenizer for autoresearch")
     parser.add_argument("--num-shards", type=int, default=10, help="Number of training shards to download (-1 = all). Val shard is always pinned.")
     parser.add_argument("--download-workers", type=int, default=8, help="Number of parallel download workers")
+    parser.add_argument("--skip-download", action="store_true", help="Skip remote shard download and only train tokenizer from local data files already present in the cache.")
     args = parser.parse_args()
 
     num_shards = MAX_SHARD if args.num_shards == -1 else args.num_shards
@@ -380,8 +415,11 @@ if __name__ == "__main__":
     print()
 
     # Step 1: Download data
-    download_data(num_shards, download_workers=args.download_workers)
-    print()
+    if args.skip_download:
+        print(f"Data: skipping download, expecting local shards in {DATA_DIR}")
+    else:
+        download_data(num_shards, download_workers=args.download_workers)
+        print()
 
     # Step 2: Train tokenizer
     train_tokenizer()

@@ -39,6 +39,35 @@ uv run train.py
 
 If the above commands all work ok, your setup is working and you can go into autonomous research mode.
 
+## Local Safety Fine-Tuning Data
+
+If you want to repurpose `autoresearch` for a small refusal-tuning experiment on a local attack dataset, you can build local JSONL shards with a single `text` field and skip the default climbmix download.
+
+Example for `attack_dataset.csv` with `attack == "Emoji Game"`:
+
+```bash
+# 1. Build local train/val shards in the autoresearch cache
+python3 scripts/build_guard_dataset.py \
+  --input-csv ../attack_dataset.csv \
+  --output-dir ~/.cache/autoresearch/data \
+  --attack "Emoji Game" \
+  --selection broken-plus-resilient \
+  --overwrite
+
+# 2. Train a tokenizer on the local shards only
+uv run prepare.py --skip-download
+
+# 3. Run the usual 5-minute training loop
+uv run train.py
+```
+
+Notes:
+
+- This is still the same causal LM training loop, not a dedicated guard-model fine-tuning stack with chat-template masking or classification loss.
+- The helper script writes `shard_00000.jsonl` for train and `shard_06542.jsonl` for validation so it matches the pinned validation logic already used by `prepare.py`.
+- `--selection broken-only` trains purely on failed jailbreak examples rewritten into refusals.
+- `--selection broken-plus-resilient` mixes those rewritten refusals with already-safe responses from the CSV, which is usually the safer default.
+
 ## Running the agent
 
 Simply spin up your Claude/Codex or whatever you want in this repo (and disable all permissions), then you can prompt something like:
