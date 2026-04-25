@@ -12,9 +12,17 @@ The main research question is:
 
 Initial Colab/GPU results show that LoRA fine-tuning on Emoji Game examples reduced held-out Emoji Game ASR from **0.0575 to 0.0000** on the primary evaluation split. However, the same run caused severe over-refusal: benign false positive rate increased from **0.7895 to 1.0000** on the initial benign set and from **0.94 to 1.00** on XSTest safe prompts.
 
+The second run added XSTest safe prompts to training. This mixed fine-tuning run preserved zero Emoji Game ASR while reducing false positives to zero on both benign checks:
+
+```text
+Emoji Game ASR: 0.0000
+XSTest safe false positive rate: 0.0000
+Built-in benign false positive rate: 0.0000, with 1 UNKNOWN out of 20
+```
+
 Therefore, the current result is best interpreted as:
 
-> The model can be tuned to catch the Emoji Game jailbreak, but the first fine-tuning setup collapses into an overly conservative classifier. The next experiment adds XSTest safe prompts to the training set to improve the ASR/FPR tradeoff.
+> The model can be tuned to catch the Emoji Game jailbreak, and adding explicit safe-but-sensitive benign examples is necessary to avoid over-refusal.
 
 ## Repository Context
 
@@ -370,26 +378,17 @@ Interpretation:
 - XSTest confirms severe over-refusal.
 - The current guard classifier is not calibrated enough for benign safe-but-sensitive prompts.
 
-## Current Hypothesis
+### Experiment 2: Mixed Emoji Game + XSTest Safe Fine-Tuning
 
-The first training setup is dominated by harmful Emoji Game examples. The model learns a coarse rule similar to:
+The second run used the same base model and LoRA setup, but added XSTest safe prompts to the training data.
 
-```text
-When safety-relevant content appears, answer UNSAFE.
-```
-
-This catches the attack but damages benign behavior.
-
-To improve, the next run should include benign safe-but-sensitive examples during training, especially XSTest safe prompts, so the model learns a narrower distinction:
+Adapter:
 
 ```text
-Emoji Game jailbreak intent -> UNSAFE
-Safe but sensitive / ambiguous benign request -> SAFE
+artifacts/colab_qwen2_5_0_5b_guard_lora_mixed_xstest
 ```
 
-## Next Experiment: Mixed Emoji Game + XSTest Safe Training
-
-Prepared mixed split:
+Mixed split:
 
 ```text
 emoji_train: 1407
@@ -400,7 +399,7 @@ xstest_val: 25
 mixed_val: 200
 ```
 
-Planned command:
+Training command:
 
 ```bash
 python scripts/finetune_causal_guard.py \
@@ -427,19 +426,133 @@ Expected optimizer steps:
 1632 train rows / 8 gradient accumulation * 2 epochs = ~408 optimizer steps
 ```
 
-Evaluation after this run should use:
+#### Mixed Adapter Evaluated With XSTest Safe Prompts
 
-1. Emoji Game harmful eval.
-2. Original built-in benign eval.
-3. XSTest safe eval.
-
-Success criteria for the mixed run:
+Result:
 
 ```text
-ASR remains lower than baseline
-XSTest false_positive_rate improves relative to 1.0000
-built-in benign false_positive_rate improves relative to 1.0000
+overall count: 425
+overall accuracy: 1.0000
+eval_harmful count: 175
+eval_harmful tp: 175
+eval_harmful fn: 0
+eval_harmful unknown: 0
+eval_harmful false_negative_rate / ASR: 0.0000
+eval_benign count: 250
+eval_benign tn: 250
+eval_benign fp: 0
+eval_benign unknown: 0
+eval_benign false_positive_rate: 0.0000
 ```
+
+Interpretation:
+
+- All 175 held-out Emoji Game attacks were classified as `UNSAFE`.
+- All 250 XSTest safe prompts were classified as `SAFE`.
+- The mixed adapter avoids the over-refusal collapse seen in the Emoji-only adapter.
+
+#### Mixed Adapter Evaluated With Built-in Benign Set
+
+Result:
+
+```text
+overall count: 195
+overall accuracy: 0.9949
+overall unknown_rate: 0.0051
+eval_harmful count: 175
+eval_harmful tp: 175
+eval_harmful fn: 0
+eval_harmful unknown: 0
+eval_harmful false_negative_rate / ASR: 0.0000
+eval_benign count: 20
+eval_benign tn: 19
+eval_benign fp: 0
+eval_benign unknown: 1
+eval_benign false_positive_rate: 0.0000
+```
+
+Interpretation:
+
+- All 175 held-out Emoji Game attacks were again classified as `UNSAFE`.
+- 19 out of 20 built-in benign prompts were classified as `SAFE`.
+- 1 built-in benign prompt produced `UNKNOWN`.
+- No built-in benign prompt was incorrectly classified as `UNSAFE`.
+
+### Final Comparison
+
+The primary baseline should be quoted from the first built-in-benign evaluation run:
+
+```text
+Base model:
+Emoji Game SAFE errors: 10 / 175
+Emoji Game ASR: 0.0575
+Built-in benign false positive rate: 0.7895
+```
+
+The XSTest baseline run showed slightly different harmful counts due to generative label instability:
+
+```text
+Base model with XSTest benign eval:
+Emoji Game SAFE errors: 16 / 175
+Emoji Game ASR: 0.0925
+XSTest safe false positive rate: 0.9400
+```
+
+For defense presentation, the conservative wording is:
+
+```text
+Before fine-tuning, the base model incorrectly classified 10-16 out of 175 held-out Emoji Game attacks as SAFE, depending on the evaluation run.
+After mixed fine-tuning, it classified 0 out of 175 as SAFE in both benign-evaluation settings.
+```
+
+Compact result table:
+
+```text
+Model / run                         Emoji ASR       Benign FPR
+Base, built-in benign eval          0.0575          0.7895
+Emoji-only LoRA, built-in eval      0.0000          1.0000
+Base, XSTest safe eval              0.0925          0.9400
+Emoji-only LoRA, XSTest eval        0.0000          1.0000
+Emoji + XSTest-safe LoRA, XSTest    0.0000          0.0000
+Emoji + XSTest-safe LoRA, built-in  0.0000          0.0000*
+```
+
+`*` The built-in benign run had 1 `UNKNOWN` out of 20, but 0 false positives.
+
+## Current Hypothesis
+
+The first training setup is dominated by harmful Emoji Game examples. The model learns a coarse rule similar to:
+
+```text
+When safety-relevant content appears, answer UNSAFE.
+```
+
+This catches the attack but damages benign behavior.
+
+The mixed run supports the hypothesis that benign safe-but-sensitive examples are needed during training. With XSTest safe prompts included, the model learned a narrower distinction:
+
+```text
+Emoji Game jailbreak intent -> UNSAFE
+Safe but sensitive / ambiguous benign request -> SAFE
+```
+
+## Recommended Next Work
+
+The mixed run meets the immediate success criteria:
+
+```text
+ASR remains lower than baseline: PASS
+XSTest false_positive_rate improves relative to 1.0000: PASS
+built-in benign false_positive_rate improves relative to 1.0000: PASS
+```
+
+Recommended next steps:
+
+1. Evaluate on the unsafe contrast side of XSTest, not only safe prompts.
+2. Evaluate on additional jailbreak families from `attack_dataset.csv`.
+3. Repeat with at least one larger model to check whether the behavior scales.
+4. Replace simple string parsing with a stricter constrained-decoding or logit-based classifier.
+5. Run multiple seeds to estimate variance.
 
 ## Limitations
 
@@ -449,7 +562,8 @@ built-in benign false_positive_rate improves relative to 1.0000
 4. XSTest is English-only and focused on over-refusal patterns, not all benign utility.
 5. ASR is measured on held-out examples from the same attack family, not on arbitrary unseen jailbreak families.
 6. A zero ASR on this split does not prove general jailbreak robustness.
-7. High false positive rates mean the first tuned model is not deployable as-is.
+7. High false positive rates mean the first Emoji-only tuned model is not deployable as-is.
+8. The mixed run is much stronger, but still needs broader out-of-family evaluation before any deployment claim.
 
 ## Defense-Oriented Framing
 
@@ -472,6 +586,8 @@ reports/colab_before_after_qwen2_5_0_5b.json
 reports/colab_before_after_qwen2_5_0_5b.csv
 reports/colab_before_xstest_safe.json
 reports/colab_after_xstest_safe.json
+reports/colab_after_mixed_xstest_safe.json
+reports/colab_after_mixed_builtin_benign.json
 ```
 
 Primary adapters:
@@ -480,6 +596,3 @@ Primary adapters:
 artifacts/colab_qwen2_5_0_5b_guard_lora
 artifacts/colab_qwen2_5_0_5b_guard_lora_mixed_xstest
 ```
-
-The second adapter is the planned mixed-XSTest output and may not exist until the mixed run completes.
-
