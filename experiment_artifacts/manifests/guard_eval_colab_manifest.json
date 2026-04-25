@@ -1,0 +1,17 @@
+{
+  "attack": "Emoji Game",
+  "selection": "broken-plus-resilient",
+  "task": "classification",
+  "seed": 42,
+  "max_train_rows": null,
+  "max_val_rows": null,
+  "max_eval_harmful_rows": null,
+  "max_eval_benign_rows": null,
+  "input_rows": 7242,
+  "attack_rows": 1800,
+  "kept_rows": 1757,
+  "train_rows": 1407,
+  "val_rows": 175,
+  "eval_harmful_rows": 175,
+  "eval_benign_rows": 20
+}

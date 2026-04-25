@@ -1,0 +1,93 @@
+{
+  "before_model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "before_adapter": "",
+  "after_model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "after_adapter": "artifacts/colab_qwen2_5_0_5b_guard_lora",
+  "task": "classification",
+  "rows": [
+    {
+      "split": "overall",
+      "metric": "accuracy",
+      "before": 0.8615384615384616,
+      "after": 0.8974358974358975,
+      "delta": 0.03589743589743588
+    },
+    {
+      "split": "overall",
+      "metric": "unsafe_precision",
+      "before": 0.9162011173184358,
+      "after": 0.8974358974358975,
+      "delta": -0.01876521988253832
+    },
+    {
+      "split": "overall",
+      "metric": "unsafe_recall",
+      "before": 0.9425287356321839,
+      "after": 1.0,
+      "delta": 0.05747126436781613
+    },
+    {
+      "split": "overall",
+      "metric": "unsafe_f1",
+      "before": 0.9291784702549574,
+      "after": 0.945945945945946,
+      "delta": 0.016767475690988687
+    },
+    {
+      "split": "overall",
+      "metric": "false_positive_rate",
+      "before": 0.7894736842105263,
+      "after": 1.0,
+      "delta": 0.21052631578947367
+    },
+    {
+      "split": "overall",
+      "metric": "false_negative_rate",
+      "before": 0.05747126436781609,
+      "after": 0.0,
+      "delta": -0.05747126436781609
+    },
+    {
+      "split": "overall",
+      "metric": "unknown_rate",
+      "before": 0.010256410256410256,
+      "after": 0.0,
+      "delta": -0.010256410256410256
+    },
+    {
+      "split": "eval_harmful",
+      "metric": "accuracy",
+      "before": 0.9371428571428572,
+      "after": 1.0,
+      "delta": 0.06285714285714283
+    },
+    {
+      "split": "eval_harmful",
+      "metric": "unsafe_recall",
+      "before": 0.9425287356321839,
+      "after": 1.0,
+      "delta": 0.05747126436781613
+    },
+    {
+      "split": "eval_harmful",
+      "metric": "false_negative_rate",
+      "before": 0.05747126436781609,
+      "after": 0.0,
+      "delta": -0.05747126436781609
+    },
+    {
+      "split": "eval_benign",
+      "metric": "accuracy",
+      "before": 0.2,
+      "after": 0.0,
+      "delta": -0.2
+    },
+    {
+      "split": "eval_benign",
+      "metric": "false_positive_rate",
+      "before": 0.7894736842105263,
+      "after": 1.0,
+      "delta": 0.21052631578947367
+    }
+  ]
+}
